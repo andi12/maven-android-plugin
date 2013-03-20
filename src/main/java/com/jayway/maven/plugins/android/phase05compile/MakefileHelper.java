@@ -254,6 +254,7 @@ public class MakefileHelper
                 apklibStatic = true;
                 makeFile.append( resolveRelativePath( outputDir, staticLibs[libIdx] ) );
                 makeFile.append( '\n' );
+                // TODO: Should we parametarize ABI here e.g. lib<filename>-<version>-$(TARGET_ARCH_ABI)
                 makeFile.append( "LOCAL_MODULE_FILENAME := " 
                         + FilenameUtils.removeExtension( staticLibs[libIdx].getName() ) ); 
             }
