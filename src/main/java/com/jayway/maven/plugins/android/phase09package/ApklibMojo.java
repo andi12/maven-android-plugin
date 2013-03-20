@@ -66,6 +66,13 @@ public class ApklibMojo extends AbstractAndroidMojo
     private File ndkOutputDirectory;
     
     /**
+     * <p>Classifier to add to the artifact generated. If given, the artifact will be an attachment instead.</p>
+     *
+     * @parameter
+     */
+    private String classifier;
+    
+    /**
      * Defines the architecture for the NDK build
      *
      * @parameter expression="${android.ndk.build.architecture}" default-value="armeabi"
@@ -87,8 +94,16 @@ public class ApklibMojo extends AbstractAndroidMojo
 
         File outputFile = createApkLibraryFile();
 
-        // Set the generated .apklib file as the main artifact (because the pom states <packaging>apklib</packaging>)
-        project.getArtifact().setFile( outputFile );
+        if ( classifier == null )
+        {
+            // Set the generated file as the main artifact (because the pom states <packaging>apklib</packaging>)
+            project.getArtifact().setFile( outputFile );
+        }
+        else
+        {
+            // If there is a classifier specified, attach the artifact using that
+            projectHelper.attachArtifact( project, outputFile, classifier );
+        }
     }
 
     /**
@@ -111,6 +126,16 @@ public class ApklibMojo extends AbstractAndroidMojo
             addDirectory( jarArchiver, assetsDirectory, "assets" );
             addDirectory( jarArchiver, resourceDirectory, "res" );
             addDirectory( jarArchiver, sourceDirectory, "src" );
+
+            File[] overlayDirectories = getResourceOverlayDirectories();
+            for ( File resOverlayDir : overlayDirectories )
+            {
+                if ( resOverlayDir != null && resOverlayDir.exists() )
+                {
+                    addDirectory( jarArchiver, resOverlayDir, "res" );
+                }
+            }
+
             addJavaResources( jarArchiver, project.getBuild().getResources(), "src" );
 
             // Lastly, add any native libraries
@@ -154,6 +179,21 @@ public class ApklibMojo extends AbstractAndroidMojo
                 //        libraries from dependencies of the APKLIB
                 //final File dependentLibs = new File( ndkOutputDirectory.getAbsolutePath(), ndkArchitecture );
                 //addSharedLibraries( jarArchiver, dependentLibs, prefix );
+
+                // get native libs from other apklibs
+                for ( Artifact apkLibraryArtifact : getAllRelevantDependencyArtifacts() )
+                {
+                    if ( apkLibraryArtifact.getType().equals( APKLIB ) )
+                    {
+                        final File apklibLibsDirectory = new File( getLibraryUnpackDirectory( apkLibraryArtifact ) + "/"
+                                + NATIVE_LIBRARIES_FOLDER + "/" + ndkArchitecture );
+
+                        if ( apklibLibsDirectory.exists() )
+                        {
+                            addSharedLibraries( jarArchiver, apklibLibsDirectory, prefix );
+                        }
+                    }
+                }
             }
         }
         catch ( ArchiverException e )
@@ -258,11 +298,15 @@ public class ApklibMojo extends AbstractAndroidMojo
                 return name.startsWith( "lib" ) && name.endsWith( ".so" );
             }
         } );
-        for ( File libFile : libFiles ) 
+
+        if ( libFiles != null )
         {
-            String dest = prefix + "/" + libFile.getName();
-            getLog().debug( "Adding " + libFile + " as " + dest );
-            jarArchiver.addFile( libFile, dest );
+            for ( File libFile : libFiles )
+            {
+                String dest = prefix + "/" + libFile.getName();
+                getLog().debug( "Adding " + libFile + " as " + dest );
+                jarArchiver.addFile( libFile, dest );
+            }
         }
     }
 
@@ -276,16 +320,7 @@ public class ApklibMojo extends AbstractAndroidMojo
 
         CommandExecutor executor = CommandExecutor.Factory.createDefaultCommmandExecutor();
         executor.setLogger( this.getLog() );
-        File[] overlayDirectories;
-
-        if ( resourceOverlayDirectories == null || resourceOverlayDirectories.length == 0 )
-        {
-            overlayDirectories = new File[]{ resourceOverlayDirectory };
-        }
-        else
-        {
-            overlayDirectories = resourceOverlayDirectories;
-        }
+        File[] overlayDirectories = getResourceOverlayDirectories();
 
         File androidJar = getAndroidSdk().getAndroidJar();
         File outputFile = new File( project.getBuild().getDirectory(), project.getBuild().getFinalName() + ".ap_" );
@@ -320,8 +355,12 @@ public class ApklibMojo extends AbstractAndroidMojo
         {
             if ( apkLibraryArtifact.getType().equals( APKLIB ) )
             {
-                commands.add( "-S" );
-                commands.add( getLibraryUnpackDirectory( apkLibraryArtifact ) + "/res" );
+                String apklibResDirectory = getLibraryUnpackDirectory( apkLibraryArtifact ) + "/res";
+                if ( new File( apklibResDirectory ).exists() )
+                {
+                    commands.add( "-S" );
+                    commands.add( apklibResDirectory );
+                }
             }
         }
         commands.add( "--auto-add-overlay" );

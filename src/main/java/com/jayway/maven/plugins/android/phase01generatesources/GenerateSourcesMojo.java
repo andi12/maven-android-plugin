@@ -20,6 +20,8 @@ import com.jayway.maven.plugins.android.AbstractAndroidMojo;
 import com.jayway.maven.plugins.android.CommandExecutor;
 import com.jayway.maven.plugins.android.ExecutionException;
 import com.jayway.maven.plugins.android.common.AetherHelper;
+import com.jayway.maven.plugins.android.manifmerger.ManifestMerger;
+
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang.StringUtils;
 import org.apache.maven.artifact.Artifact;
@@ -52,6 +54,8 @@ import static com.jayway.maven.plugins.android.common.AndroidExtension.APKSOURCE
  * Generates java files based on aidl files.
  *
  * @author hugo.josefson@jayway.com
+ * @author Manfred Moser <manfred@simpligility.com>
+ *
  * @goal generate-sources
  * @phase generate-sources
  * @requiresProject true
@@ -59,19 +63,28 @@ import static com.jayway.maven.plugins.android.common.AndroidExtension.APKSOURCE
  */
 public class GenerateSourcesMojo extends AbstractAndroidMojo
 {
-    
+
     /**
-     * <p>Override default merging. You must have SDK Tools r20+</p>
+     * <p>
+     * Override default merging. You must have SDK Tools r20+
+     * </p>
      * 
-     * <p><b>IMPORTANT:</b> The resource plugin needs to be disabled for the 
-     * <code>process-resources</code> phase,
-     * so the "default-resources" execution must be added. 
-     * Without this the non-merged manifest will get re-copied to
-     * the build directory.</p>
-     * <p>The <code>androidManifestFile</code> should also be 
-     * configured to pull from the build directory so that
-     * later phases will pull the merged manifest file.</p>
-     * <p>Example POM Setup:</p>
+     * <p>
+     * <b>IMPORTANT:</b> The resource plugin needs to be disabled for the
+     * <code>process-resources</code> phase, so the "default-resources"
+     * execution must be added. Without this the non-merged manifest will get
+     * re-copied to the build directory.
+     * </p>
+     * 
+     * <p>
+     * The <code>androidManifestFile</code> should also be configured to pull
+     * from the build directory so that later phases will pull the merged
+     * manifest file.
+     * </p>
+     * <p>
+     * Example POM Setup:
+     * </p>
+     * 
      * <pre>
      * &lt;build&gt;
      *     ...
@@ -108,6 +121,24 @@ public class GenerateSourcesMojo extends AbstractAndroidMojo
      *     &lt;/plugins&gt;
      *     ...
      * &lt;/build&gt;
+     * </pre>
+     * <p>
+     * You can filter the pre-merged APK manifest. One important note about Eclipse, Eclipse will
+     * replace the merged manifest with a filtered pre-merged version when the project is refreshed.
+     * If you want to review the filtered merged version then you will need to open it outside Eclipse
+     * without refreshing the project in Eclipse. 
+     * </p>
+     * <pre>
+     * &lt;resources&gt;
+     *     &lt;resource&gt;
+     *         &lt;targetPath&gt;${project.build.directory}&lt;/targetPath&gt;
+     *         &lt;filtering&gt;true&lt;/filtering&gt;
+     *         &lt;directory&gt;${basedir}&lt;/directory&gt;
+     *         &lt;includes&gt;
+     *             &lt;include&gt;AndroidManifest.xml&lt;/include&gt;
+     *         &lt;/includes&gt;
+     *     &lt;/resource&gt;
+     * &lt;/resources&gt;
      * </pre>
      * 
      * @parameter expression="${android.mergeManifests}" default-value="false"
@@ -331,16 +362,7 @@ public class GenerateSourcesMojo extends AbstractAndroidMojo
 
         genDirectory.mkdirs();
 
-        File[] overlayDirectories;
-
-        if ( resourceOverlayDirectories == null || resourceOverlayDirectories.length == 0 )
-        {
-            overlayDirectories = new File[]{ resourceOverlayDirectory };
-        }
-        else
-        {
-            overlayDirectories = resourceOverlayDirectories;
-        }
+        File[] overlayDirectories = getResourceOverlayDirectories();
 
         if ( extractedDependenciesRes.exists() )
         {
@@ -436,6 +458,16 @@ public class GenerateSourcesMojo extends AbstractAndroidMojo
             commands.add( "-c" );
             commands.add( configurations );
         }
+        if ( proguardFile != null )
+        {
+            File parentFolder = proguardFile.getParentFile();
+            if ( parentFolder != null )
+            {
+                parentFolder.mkdirs();
+            }
+            commands.add( "-G" );
+            commands.add( proguardFile.getAbsolutePath() );
+        }
         getLog().info( getAndroidSdk().getPathForTool( "aapt" ) + " " + commands.toString() );
         try
         {
@@ -517,13 +549,11 @@ public class GenerateSourcesMojo extends AbstractAndroidMojo
         {
             File mergedManifest = new File( androidManifestFile.getParent(), "AndroidManifest-merged.xml" );
 
-            File sdkLibs = getAndroidSdk().getSDKLibJar();
-            File mergerLib = getAndroidSdk().getManifmergerJar();
-
-            ManifestMerger mm = new ManifestMerger( getLog(), sdkLibs, mergerLib );
+            ManifestMerger mm = new ManifestMerger( getLog(), getAndroidSdk().getSdkPath(), getAndroidSdk()
+                    .getSdkMajorVersion() );
 
             getLog().info( "Merging manifests of dependent apklibs" );
-            if ( mm.process( mergedManifest, androidManifestFile,
+            if ( mm.process( mergedManifest, androidManifestFile, 
                     libManifests.toArray( new File[libManifests.size()] ) ) )
             {
                 // Replace the original manifest file with the merged one so that
@@ -571,6 +601,7 @@ public class GenerateSourcesMojo extends AbstractAndroidMojo
 
         List<String> commands = new ArrayList<String>();
         commands.add( "package" );
+        commands.add( "--non-constant-id" );
         commands.add( "-m" );
         commands.add( "-J" );
         commands.add( genDirectory.getAbsolutePath() );
